@@ -6,6 +6,8 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
+use frame_support::traits::{Currency, LockableCurrency};
+use pallet_balances::{PositiveImbalance, NegativeImbalance};
 use pallet_grandpa::{
 	fg_primitives, AuthorityId as GrandpaId, AuthorityList as GrandpaAuthorityList,
 };
@@ -208,10 +210,14 @@ impl pallet_aura::Config for Runtime {
 
 parameter_types! {
 	pub const MaxMoneyPotCurrentlyOpen: u32 = 5;
+	pub const MaxMoneyPotContributors: u32 = 1000;
 }
 
 impl pallet_money_pot::Config for Runtime {
 	type Event = Event;
+	type Currency = Balances;
+	type MaxMoneyPotCurrentlyOpen = MaxMoneyPotCurrentlyOpen;
+	type MaxMoneyPotContributors = MaxMoneyPotContributors;
 }
 
 impl pallet_grandpa::Config for Runtime {
@@ -243,7 +249,7 @@ impl pallet_timestamp::Config for Runtime {
 }
 
 /// Existential deposit.
-pub const EXISTENTIAL_DEPOSIT: u128 = 500;
+pub const EXISTENTIAL_DEPOSIT: u128 = 1;
 
 impl pallet_balances::Config for Runtime {
 	type MaxLocks = ConstU32<50>;
