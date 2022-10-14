@@ -7,6 +7,7 @@
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
 use frame_support::traits::{Currency, LockableCurrency};
+use frame_system::EnsureRoot;
 use pallet_balances::{PositiveImbalance, NegativeImbalance};
 use pallet_grandpa::{
 	fg_primitives, AuthorityId as GrandpaId, AuthorityList as GrandpaAuthorityList,
@@ -211,13 +212,18 @@ impl pallet_aura::Config for Runtime {
 parameter_types! {
 	pub const MaxMoneyPotCurrentlyOpen: u32 = 5;
 	pub const MaxMoneyPotContributors: u32 = 1000;
+	pub const MinContribution: u32 = 5;
+	pub const StepContribution: u32 = 5;
 }
 
 impl pallet_money_pot::Config for Runtime {
 	type Event = Event;
 	type Currency = Balances;
+	// type Scheduler = Scheduler;
 	type MaxMoneyPotCurrentlyOpen = MaxMoneyPotCurrentlyOpen;
 	type MaxMoneyPotContributors = MaxMoneyPotContributors;
+	type MinContribution = MinContribution;
+	type StepContribution = StepContribution;
 }
 
 impl pallet_grandpa::Config for Runtime {
@@ -265,6 +271,24 @@ impl pallet_balances::Config for Runtime {
 	type WeightInfo = pallet_balances::weights::SubstrateWeight<Runtime>;
 }
 
+parameter_types! {
+	pub MaximumSchedulerWeight: Weight = Perbill::from_percent(70) * BlockWeights::get().max_block;
+}
+
+impl pallet_scheduler::Config for Runtime {
+    type Event = Event;
+    type Origin = Origin;
+    type PalletsOrigin = OriginCaller;
+    type Call = Call;
+    type MaximumWeight = MaximumSchedulerWeight;
+    type ScheduleOrigin = EnsureRoot<AccountId>;
+    type OriginPrivilegeCmp = frame_support::traits::EqualPrivilegeOnly;
+    type MaxScheduledPerBlock = ConstU32<50>;
+    type WeightInfo = pallet_scheduler::weights::SubstrateWeight<Runtime>;
+    type PreimageProvider = ();
+    type NoPreimagePostponement = ();
+}
+
 impl pallet_transaction_payment::Config for Runtime {
 	type Event = Event;
 	type OnChargeTransaction = CurrencyAdapter<Balances, ()>;
@@ -293,6 +317,7 @@ construct_runtime!(
 		Aura: pallet_aura,
 		Grandpa: pallet_grandpa,
 		Balances: pallet_balances,
+		Scheduler: pallet_scheduler,
 		TransactionPayment: pallet_transaction_payment,
 		Sudo: pallet_sudo,
 		MoneyPot: pallet_money_pot,

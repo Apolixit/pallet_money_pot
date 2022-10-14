@@ -14,8 +14,8 @@ pub mod pallet {
 		pallet_prelude::{DispatchResult, *},
 		sp_runtime::traits::Hash,
 		sp_runtime::SaturatedConversion,
-		traits::{IsType, Currency, LockableCurrency, LockIdentifier},
-		BoundedVec, Twox64Concat,
+		traits::{IsType, Currency, LockableCurrency, LockIdentifier, schedule::{DispatchTime, Named as ScheduleNamed}},
+		BoundedVec, Twox64Concat, dispatch::Dispatchable,
 	};
 	use frame_system::{ensure_signed, pallet_prelude::*};
 	use scale_info::TypeInfo;
@@ -124,6 +124,11 @@ pub mod pallet {
         // Currency type for this pallet
         type Currency: LockableCurrency<Self::AccountId, Moment = Self::BlockNumber>;
 
+		// type Proposal: Parameter + Dispatchable<RuntimeOrigin = Self::RuntimeOrigin> + From<Call<Self>>;
+
+		///Scheduler use to dispatch money pot when ending
+		// type Scheduler: ScheduleNamed<Self::BlockNumber, Self::Proposal, Self::PalletsOrigin>;
+
 		/// The maximum money pot can be currently open by an account
 		#[pallet::constant]
 		type MaxMoneyPotCurrentlyOpen: Get<u32>;
@@ -131,6 +136,13 @@ pub mod pallet {
 		/// The maximum contributors for each money pot
 		#[pallet::constant]
 		type MaxMoneyPotContributors: Get<u32>;
+
+		/// The minimum contribution amount to participate to a money pot
+		#[pallet::constant]
+		type MinContribution: Get<u32>;
+
+		/// The contribution step
+		type StepContribution: Get<u32>;
 	}
 
 	#[pallet::event]
@@ -165,7 +177,14 @@ pub mod pallet {
         NotEnoughBalance,
         /// The number of contributor is too high
         MaxMoneyPotContributors,
+		/// Transfer failed for this account
 		TransferFailed,
+		/// Incompatible amount set with step constant defined
+		InvalidAmountStep,
+		/// The amount participation is too low
+		AmountToLow,
+		/// Someone tries to contribute to an unactive pool
+		MoneyPotIsClose,
 	}
 
 	// #[pallet::storage]
@@ -183,6 +202,10 @@ pub mod pallet {
 	// #[pallet::storage]
 	// #[pallet::getter(fn money_pot_available)]
 	// pub type MoneyPotsAvailable<T: Config> = StorageValue<_, sp_std::vec::Vec<(MoneyPotId, T::Hash, T::AccountId)>, ValueQuery>;
+
+	#[pallet::storage]
+	#[pallet::getter(fn money_pots_hash)]
+	pub type MoneyPotsHash<T: Config> = StorageMap<_, Twox64Concat, MoneyPotIndex, T::Hash>;
 
 	// Store money pot with his hash
 	#[pallet::storage]
@@ -234,12 +257,14 @@ pub mod pallet {
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
 		#[pallet::weight(100)]
-		pub fn add_visibility(
+		pub fn change_visibility(
 			origin: OriginFor<T>,
 			id: T::Hash,
 			visibility: Visibility,
 		) -> DispatchResult {
 			let sender = ensure_signed(origin)?;
+
+			// TODO
 
 			Ok(())
 		}
@@ -253,9 +278,13 @@ pub mod pallet {
             log::info!("💰 [Money pot] - create_with_limit_amount call");
 			let sender = ensure_signed(origin)?;
 
+			// Check if amount is compatible with contribution step
+			// ensure!(amount % T::MaxMoneyPotContributors == 0, <Error<T>>::InvalidAmountStep);
+
             log::info!("💰 [Money pot] - create_with_limit_amount ok ensure_signed");
 
 			let mut created_money_pot = MoneyPot::<T>::create(&sender, &receiver, Visibility::Everyone);
+
 			created_money_pot.with_native_currency_limit(amount);
 			let ref_hash = Self::control_creation(created_money_pot)?;
             log::info!("💰 [Money pot] - create_with_limit_amount ok control_creation");
@@ -290,7 +319,13 @@ pub mod pallet {
 			// let existential_deposit = T::ExistentialDeposit::get();
 
 			let contributor = ensure_signed(origin)?;
+			// Check if amount is compatible with contribution step
+			// ensure!(amount % T::StepContribution == 0, <Error<T>>::InvalidAmountStep);
+			// Check if amount is sup than min contribution
+			// ensure!(amount >= T::MinContribution, <Error<T>>::AmountToLow);
+
 			let money_pot = Self::get_money_pot(&ref_hash)?;
+			ensure!(money_pot.is_active, <Error<T>>::MoneyPotIsClose);
 
             // Check if the sender has enought fund
 			ensure!(T::Currency::free_balance(&contributor) >= amount, <Error<T>>::NotEnoughBalance);
@@ -362,6 +397,8 @@ pub mod pallet {
 			// Inc money pot counter
 			let pot_id = Self::money_pot_count() + 1;
 			MoneyPotsCount::<T>::put(pot_id);
+			// Also do the mapping between Id and Hash
+			MoneyPotsHash::<T>::insert(pot_id, money_pot_hash);
 
 			// if money_pot.visibility == Visibility::Everyone {
 			// 	<MoneyPotsAvailable<T>>::append((pot_id, money_pot_hash, money_pot.owner));
@@ -434,6 +471,10 @@ pub mod pallet {
 
 			// Time to close it
 			money_pot.close();
+			log::info!("💰 [Money pot] - Is close = {}", !money_pot.is_active);
+
+			<MoneyPots<T>>::remove(&ref_hash);
+			<MoneyPots<T>>::insert(ref_hash, money_pot);
 
 			Self::deposit_event(Event::Closed { ref_hash });
 
