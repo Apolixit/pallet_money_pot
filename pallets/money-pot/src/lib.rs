@@ -333,9 +333,15 @@ pub mod pallet {
             log::info!("💰 [Money pot] - Free balance = {:?}", T::Currency::free_balance(&contributor));
 			Self::lock_balance(&contributor, amount);
 
-            // let contributions = <MoneyPotContribution<T>>::try_get(&money_pot_id).unwrap_or()
+			// Insert contribution
+			// If there is a previous contribution with the same account, the amount is added to the previous one
             <MoneyPotContribution<T>>::try_mutate(&ref_hash, |p| {
-                p.try_push((contributor.clone(), amount))
+				if let Some(previous) = p.iter_mut().find(|prev| prev.0 == contributor) {
+					previous.1 += amount;
+					Ok(())
+				} else {
+					p.try_push((contributor.clone(), amount))
+				}
             }).map_err(|_| <Error<T>>::MaxMoneyPotContributors)?;
 
 			if Self::is_need_transfer(&ref_hash, money_pot)? {
