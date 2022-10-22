@@ -54,15 +54,13 @@ pub mod pallet {
 		pub start_time: T::BlockNumber,
 		/// When the pot will end and funds transfer to receiver
 		pub end_time: Option<EndType<T>>,
-		/// Define if the money pot is visible by everyone, or by restricted users
-		pub visibility: Visibility,
 		/// Is currently active or not
 		pub is_active: bool,
 	}
 
 
 	impl<T: Config> MoneyPot<T> {
-		fn create(owner: &T::AccountId, receiver: &T::AccountId, visibility: Visibility) -> MoneyPot<T> {
+		fn create(owner: &T::AccountId, receiver: &T::AccountId) -> MoneyPot<T> {
 			log::info!("💰 [Money pot] - Create called");
 
 			MoneyPot::<T> {
@@ -70,7 +68,6 @@ pub mod pallet {
 				receiver: receiver.clone(),
 				start_time: <frame_system::Pallet<T>>::block_number(),
 				end_time: None,
-				visibility,
 				is_active: true
 			}
 		}
@@ -107,12 +104,6 @@ pub mod pallet {
 		USD,
 	}
 
-	#[derive(RuntimeDebug, Clone, Encode, Decode, TypeInfo, MaxEncodedLen, PartialEq)]
-	pub enum Visibility {
-		Everyone,
-		Restricted
-	}
-
 	#[pallet::pallet]
 	#[pallet::generate_store(pub(super) trait Store)]
 	pub struct Pallet<T>(_);
@@ -124,8 +115,8 @@ pub mod pallet {
         // Currency type for this pallet
         type Currency: LockableCurrency<Self::AccountId, Moment = Self::BlockNumber>;
 
+		// TODO: setup scheduler
 		// type Proposal: Parameter + Dispatchable<RuntimeOrigin = Self::RuntimeOrigin> + From<Call<Self>>;
-
 		///Scheduler use to dispatch money pot when ending
 		// type Scheduler: ScheduleNamed<Self::BlockNumber, Self::Proposal, Self::PalletsOrigin>;
 
@@ -139,10 +130,15 @@ pub mod pallet {
 
 		/// The minimum contribution amount to participate to a money pot
 		#[pallet::constant]
-		type MinContribution: Get<u32>;
+		type MinContribution: Get<BalanceOf<Self>>;
 
 		/// The contribution step
-		type StepContribution: Get<u32>;
+		#[pallet::constant]
+		type StepContribution: Get<BalanceOf<Self>>;
+
+		/// The minimum amount required to keep an account open.
+		#[pallet::constant]
+		type ExistentialDeposit: Get<BalanceOf<Self>>;
 	}
 
 	#[pallet::event]
@@ -198,11 +194,6 @@ pub mod pallet {
 	#[pallet::getter(fn money_pot_count)]
 	pub type MoneyPotsCount<T> = StorageValue<_, MoneyPotIndex, ValueQuery>;
 
-	// Store money pot available to participate (i.e. visibility everyone + active)
-	// #[pallet::storage]
-	// #[pallet::getter(fn money_pot_available)]
-	// pub type MoneyPotsAvailable<T: Config> = StorageValue<_, sp_std::vec::Vec<(MoneyPotId, T::Hash, T::AccountId)>, ValueQuery>;
-
 	#[pallet::storage]
 	#[pallet::getter(fn money_pots_hash)]
 	pub type MoneyPotsHash<T: Config> = StorageMap<_, Twox64Concat, MoneyPotIndex, T::Hash>;
@@ -249,26 +240,13 @@ pub mod pallet {
 	impl<T: Config> GenesisBuild<T> for GenesisConfig<T> {
 		fn build(&self) {
 			for (sender, receiver, amount) in &self.money_pot {
-				MoneyPot::<T>::create(sender, receiver, Visibility::Everyone).with_native_currency_limit(amount.clone());
+				MoneyPot::<T>::create(sender, receiver).with_native_currency_limit(amount.clone());
 			}
 		}
 	}
 
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
-		#[pallet::weight(100)]
-		pub fn change_visibility(
-			origin: OriginFor<T>,
-			id: T::Hash,
-			visibility: Visibility,
-		) -> DispatchResult {
-			let sender = ensure_signed(origin)?;
-
-			// TODO
-
-			Ok(())
-		}
-
 		#[pallet::weight(100)]
 		pub fn create_with_limit_amount(
 			origin: OriginFor<T>,
@@ -279,11 +257,11 @@ pub mod pallet {
 			let sender = ensure_signed(origin)?;
 
 			// Check if amount is compatible with contribution step
-			// ensure!(amount % T::MaxMoneyPotContributors == 0, <Error<T>>::InvalidAmountStep);
+			// ensure!(amount % T::MaxMoneyPotContributors::get() == 0, <Error<T>>::InvalidAmountStep);
 
             log::info!("💰 [Money pot] - create_with_limit_amount ok ensure_signed");
 
-			let mut created_money_pot = MoneyPot::<T>::create(&sender, &receiver, Visibility::Everyone);
+			let mut created_money_pot = MoneyPot::<T>::create(&sender, &receiver);
 
 			created_money_pot.with_native_currency_limit(amount);
 			let ref_hash = Self::control_creation(created_money_pot)?;
@@ -303,7 +281,7 @@ pub mod pallet {
 		) -> DispatchResult {
 			let sender = ensure_signed(origin)?;
 
-			let mut created_money_pot = MoneyPot::<T>::create(&sender, &receiver, Visibility::Everyone);
+			let mut created_money_pot = MoneyPot::<T>::create(&sender, &receiver);
 			created_money_pot.with_end_block(end_block);
 			let ref_hash = Self::control_creation(created_money_pot)?;
 
@@ -313,22 +291,27 @@ pub mod pallet {
 		}
 
 		#[pallet::weight(100)]
-		pub fn add_funds_to_pot(origin: OriginFor<T>, ref_hash: T::Hash, amount: BalanceOf<T>) -> DispatchResult {
-            // TODO: do I need to get my account with Lookup struct and check ExistentialDeposit ?
-			// let who = T::Lookup::lookup(who)?;
-			// let existential_deposit = T::ExistentialDeposit::get();
+		pub fn add_balance(origin: OriginFor<T>, ref_hash: T::Hash, amount: BalanceOf<T>) -> DispatchResult {
+            // TODO: do I need to get my account with Lookup struct ?
+			// let who2 = T::Lookup::lookup(who)?;
 
 			let contributor = ensure_signed(origin)?;
 			// Check if amount is compatible with contribution step
-			// ensure!(amount % T::StepContribution == 0, <Error<T>>::InvalidAmountStep);
+
+
+			/* 	Check if amount is compatible with contribution step
+					amount % T::StepContribution::get() give a BalanceOf<T>
+					We need to cast this to u32 to check if the modulo is correct
+			*/
+			ensure!((amount % T::StepContribution::get()).saturated_into::<u32>() == 0u32, <Error<T>>::InvalidAmountStep);
 			// Check if amount is sup than min contribution
-			// ensure!(amount >= T::MinContribution, <Error<T>>::AmountToLow);
+			ensure!(amount >= T::MinContribution::get(), <Error<T>>::AmountToLow);
 
 			let money_pot = Self::get_money_pot(&ref_hash)?;
 			ensure!(money_pot.is_active, <Error<T>>::MoneyPotIsClose);
 
             // Check if the sender has enought fund
-			ensure!(T::Currency::free_balance(&contributor) >= amount, <Error<T>>::NotEnoughBalance);
+			ensure!(T::Currency::free_balance(&contributor) >= amount + T::ExistentialDeposit::get(), <Error<T>>::NotEnoughBalance);
 
             log::info!("💰 [Money pot] - Free balance = {:?}", T::Currency::free_balance(&contributor));
 			Self::lock_balance(&contributor, amount);
@@ -405,10 +388,6 @@ pub mod pallet {
 			MoneyPotsCount::<T>::put(pot_id);
 			// Also do the mapping between Id and Hash
 			MoneyPotsHash::<T>::insert(pot_id, money_pot_hash);
-
-			// if money_pot.visibility == Visibility::Everyone {
-			// 	<MoneyPotsAvailable<T>>::append((pot_id, money_pot_hash, money_pot.owner));
-			// }
 
 			Ok(money_pot_hash)
 		}

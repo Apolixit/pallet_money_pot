@@ -224,6 +224,7 @@ impl pallet_money_pot::Config for Runtime {
 	type MaxMoneyPotContributors = MaxMoneyPotContributors;
 	type MinContribution = MinContribution;
 	type StepContribution = StepContribution;
+	type ExistentialDeposit = ConstU128<EXISTENTIAL_DEPOSIT>;
 }
 
 impl pallet_grandpa::Config for Runtime {
