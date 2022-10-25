@@ -219,12 +219,16 @@ parameter_types! {
 impl pallet_money_pot::Config for Runtime {
 	type Event = Event;
 	type Currency = Balances;
-	// type Scheduler = Scheduler;
+	type Scheduler = Scheduler;
 	type MaxMoneyPotCurrentlyOpen = MaxMoneyPotCurrentlyOpen;
 	type MaxMoneyPotContributors = MaxMoneyPotContributors;
 	type MinContribution = MinContribution;
 	type StepContribution = StepContribution;
 	type ExistentialDeposit = ConstU128<EXISTENTIAL_DEPOSIT>;
+	type PalletsOrigin = OriginCaller;
+	type Schedulable = Call;
+	/// Max one year
+	type MaxBlockNumberEndTime = ConstU32<{60 * 60 * 24 * 365 / SLOT_DURATION as u32}>;
 }
 
 impl pallet_grandpa::Config for Runtime {

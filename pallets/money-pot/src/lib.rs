@@ -17,9 +17,8 @@ pub mod pallet {
 		traits::{IsType, Currency, LockableCurrency, LockIdentifier, schedule::{DispatchTime, Named as ScheduleNamed}},
 		BoundedVec, Twox64Concat, dispatch::Dispatchable,
 	};
-	use frame_system::{ensure_signed, pallet_prelude::*};
+	use frame_system::{ensure_signed, pallet_prelude::{*, OriginFor}};
 	use scale_info::TypeInfo;
-	// use sp_std::prelude::*;
 
 	/// Classic incremental integer index
 	type MoneyPotIndex = u32;
@@ -27,6 +26,7 @@ pub mod pallet {
 	type AccountOf<T> = <T as frame_system::Config>::AccountId;
 	/// Shortcut to access balance
     type BalanceOf<T> = <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+	// pub type CallOf<T> = <T as frame_system::Config>::RuntimeCall;
 
     /*
     * Coming soon :
@@ -40,7 +40,6 @@ pub mod pallet {
 
     const ID_LOCK_MONEY_POT: LockIdentifier = *b"moneypot";
 
-	// #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 	#[derive(RuntimeDebug, Clone, Encode, Decode, TypeInfo, MaxEncodedLen, PartialEq)]
 	#[scale_info(skip_type_params(T))]
 	pub struct MoneyPot<T: Config> {
@@ -115,10 +114,11 @@ pub mod pallet {
         // Currency type for this pallet
         type Currency: LockableCurrency<Self::AccountId, Moment = Self::BlockNumber>;
 
-		// TODO: setup scheduler
-		// type Proposal: Parameter + Dispatchable<RuntimeOrigin = Self::RuntimeOrigin> + From<Call<Self>>;
-		///Scheduler use to dispatch money pot when ending
-		// type Scheduler: ScheduleNamed<Self::BlockNumber, Self::Proposal, Self::PalletsOrigin>;
+		type PalletsOrigin: From<frame_system::RawOrigin<Self::AccountId>>;
+
+		// Scheduler use to dispatch money pot when ending
+		type Schedulable: Parameter + Dispatchable<Origin = Self::Origin> + From<Call<Self>>;
+		type Scheduler: ScheduleNamed<Self::BlockNumber, Self::Schedulable, Self::PalletsOrigin>;
 
 		/// The maximum money pot can be currently open by an account
 		#[pallet::constant]
@@ -139,6 +139,10 @@ pub mod pallet {
 		/// The minimum amount required to keep an account open.
 		#[pallet::constant]
 		type ExistentialDeposit: Get<BalanceOf<Self>>;
+
+		/// The max block number (relative to current block number) to schedule a EndType::Time money pot
+		#[pallet::constant]
+		type MaxBlockNumberEndTime: Get<u32>;
 	}
 
 	#[pallet::event]
@@ -181,6 +185,8 @@ pub mod pallet {
 		AmountToLow,
 		/// Someone tries to contribute to an unactive pool
 		MoneyPotIsClose,
+		/// Schedule error
+		ScheduleError,
 	}
 
 	// #[pallet::storage]
@@ -245,6 +251,26 @@ pub mod pallet {
 		}
 	}
 
+	// // Shamefully stole from Democracy pallet :D
+	// // https://github.com/paritytech/substrate/blob/master/frame/democracy/src/lib.rs#L1060
+	// pub trait EncodeInto: Encode {
+	// 	fn encode_into<T: AsMut<[u8]> + Default>(&self) -> T {
+	// 		let mut t = T::default();
+	// 		self.using_encoded(|data| {
+	// 			if data.len() <= t.as_mut().len() {
+	// 				t.as_mut()[0..data.len()].copy_from_slice(data);
+	// 			} else {
+	// 				// encoded self is too big to fit into a T. hash it and use the first bytes of that
+	// 				// instead.
+	// 				let hash = sp_io::hashing::blake2_256(data);
+	// 				let l = t.as_mut().len().min(hash.len());
+	// 				t.as_mut()[0..l].copy_from_slice(&hash[0..l]);
+	// 			}
+	// 		});
+	// 		t
+	// 	}
+	// }
+
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
 		#[pallet::weight(100)]
@@ -281,9 +307,28 @@ pub mod pallet {
 		) -> DispatchResult {
 			let sender = ensure_signed(origin)?;
 
+			// Check max block number to avoid a schedule in 10 000 years...
+			let current_block = <frame_system::Pallet<T>>::block_number();
+			log::info!("💰 [Money pot] - create_with_limit_block - Current block = {:?} / End block = {:?} / Max block = {:?} / current_block + T::MaxBlockNumberEndTime::get().into() = {:?}", current_block, end_block, T::MaxBlockNumberEndTime::get(), current_block + T::MaxBlockNumberEndTime::get().into());
+			ensure!(end_block <= current_block + T::MaxBlockNumberEndTime::get().into(), <Error<T>>::ScheduleError);
+
 			let mut created_money_pot = MoneyPot::<T>::create(&sender, &receiver);
 			created_money_pot.with_end_block(end_block);
 			let ref_hash = Self::control_creation(created_money_pot)?;
+
+			log::info!("💰 [Money pot] - create_with_limit_block ok control_creation");
+
+			// TODO: Get the money pot index
+			let schedule_result = T::Scheduler::schedule_named(
+				(ID_LOCK_MONEY_POT, ref_hash).encode(),
+				DispatchTime::At(end_block),
+				None,
+				63,
+				frame_system::RawOrigin::Root.into(),
+				Call::transfer_balance { ref_hash }.into()
+			).map_err(|_| <Error<T>>::ScheduleError)?;
+
+			log::info!("💰 [Money pot] - schedule dispatch ok ({:?})", schedule_result);
 
 			Self::deposit_event(Event::Created { ref_hash });
 
@@ -296,14 +341,13 @@ pub mod pallet {
 			// let who2 = T::Lookup::lookup(who)?;
 
 			let contributor = ensure_signed(origin)?;
-			// Check if amount is compatible with contribution step
-
 
 			/* 	Check if amount is compatible with contribution step
 					amount % T::StepContribution::get() give a BalanceOf<T>
 					We need to cast this to u32 to check if the modulo is correct
 			*/
 			ensure!((amount % T::StepContribution::get()).saturated_into::<u32>() == 0u32, <Error<T>>::InvalidAmountStep);
+
 			// Check if amount is sup than min contribution
 			ensure!(amount >= T::MinContribution::get(), <Error<T>>::AmountToLow);
 
@@ -336,6 +380,13 @@ pub mod pallet {
             Ok(())
 		}
 
+		#[pallet::weight(100)]
+		pub fn transfer_balance(origin: OriginFor<T>, ref_hash: T::Hash) -> DispatchResult {
+			ensure_root(origin);
+			Self::transfer_contributions(ref_hash)?;
+
+			Ok(())
+		}
 
 	}
 
