@@ -11,13 +11,20 @@ pub use pallet::*;
 pub mod pallet {
 	use codec::{Decode, Encode};
 	use frame_support::{
+		dispatch::Dispatchable,
 		pallet_prelude::{DispatchResult, *},
 		sp_runtime::traits::Hash,
 		sp_runtime::SaturatedConversion,
-		traits::{IsType, Currency, LockableCurrency, LockIdentifier, schedule::{DispatchTime, Named as ScheduleNamed}},
-		BoundedVec, Twox64Concat, dispatch::Dispatchable,
+		traits::{
+			schedule::{DispatchTime, Named as ScheduleNamed},
+			Currency, IsType, LockIdentifier, LockableCurrency,
+		},
+		BoundedVec, Twox64Concat,
 	};
-	use frame_system::{ensure_signed, pallet_prelude::{*, OriginFor}};
+	use frame_system::{
+		ensure_signed,
+		pallet_prelude::{OriginFor, *},
+	};
 	use scale_info::TypeInfo;
 
 	/// Classic incremental integer index
@@ -25,27 +32,21 @@ pub mod pallet {
 	/// Shortcut to access account
 	type AccountOf<T> = <T as frame_system::Config>::AccountId;
 	/// Shortcut to access balance
-    type BalanceOf<T> = <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+	type BalanceOf<T> =
+		<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 	// pub type CallOf<T> = <T as frame_system::Config>::RuntimeCall;
 
-    /*
-    * Coming soon :
-    *   Add a minimim price for each contribution
-    *   Add a step (10 by 10 for example)
-    *   Keep track of all the money pot created (like kitties)
-	* 	Implement money pot to be closed with a BlockNumber specified
-	* 	Add ManualClose functionnality to allow money pot creator to close the money pot manually
-	*	Add a vault where every funds will be transfered to instead of lock amount in every account (which seems less secure)
-    */
+	/*
+	 * Coming soon :
+		*	Add a vault where every funds will be transfered to instead of lock amount in every account (which seems less secure)
+	 */
 
-    const ID_LOCK_MONEY_POT: LockIdentifier = *b"moneypot";
+	const ID_LOCK_MONEY_POT: LockIdentifier = *b"moneypot";
 
 	#[derive(RuntimeDebug, Clone, Encode, Decode, TypeInfo, MaxEncodedLen, PartialEq)]
 	#[scale_info(skip_type_params(T))]
 	pub struct MoneyPot<T: Config> {
-		/// The money pot identifier
-		//pub id: Hash,
-		/// The creator
+		/// Creator
 		pub owner: AccountOf<T>,
 		/// Person who will receive fund
 		pub receiver: AccountOf<T>,
@@ -57,8 +58,8 @@ pub mod pallet {
 		pub is_active: bool,
 	}
 
-
 	impl<T: Config> MoneyPot<T> {
+		/// Create a new money pot with default value
 		fn create(owner: &T::AccountId, receiver: &T::AccountId) -> MoneyPot<T> {
 			log::info!("💰 [Money pot] - Create called");
 
@@ -67,15 +68,17 @@ pub mod pallet {
 				receiver: receiver.clone(),
 				start_time: <frame_system::Pallet<T>>::block_number(),
 				end_time: None,
-				is_active: true
+				is_active: true,
 			}
 		}
 
+		/// Set end time to amount limit
 		pub fn with_native_currency_limit(&mut self, amount: BalanceOf<T>) {
 			self.end_time =
 				Some(EndType::AmountReached { amount_type: AmountType::Native, amount });
 		}
 
+		/// Set end time to blocknumber limit
 		pub fn with_end_block(&mut self, end_time: T::BlockNumber) {
 			self.end_time = Some(EndType::Time(end_time));
 		}
@@ -92,10 +95,12 @@ pub mod pallet {
 	pub enum EndType<T: Config> {
 		/// Finished on a specific block
 		Time(T::BlockNumber),
+
 		/// The fixed amount has been reached
 		AmountReached { amount_type: AmountType, amount: BalanceOf<T> },
 	}
 
+	/// Currently not use, maybe soon...
 	#[derive(RuntimeDebug, Clone, Encode, Decode, TypeInfo, MaxEncodedLen, PartialEq)]
 	pub enum AmountType {
 		Native,
@@ -111,8 +116,8 @@ pub mod pallet {
 	pub trait Config: frame_system::Config {
 		type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
 
-        // Currency type for this pallet
-        type Currency: LockableCurrency<Self::AccountId, Moment = Self::BlockNumber>;
+		// Currency type for this pallet
+		type Currency: LockableCurrency<Self::AccountId, Moment = Self::BlockNumber>;
 
 		type PalletsOrigin: From<frame_system::RawOrigin<Self::AccountId>>;
 
@@ -162,6 +167,7 @@ pub mod pallet {
 	pub enum Error<T> {
 		/// The account has more than 'MaxMoneyPotCurrentlyOpen' money pot
 		MaxOpenOverflow,
+		/// Unstable state with a money pot which have no end time
 		NoEndTimeSpecified,
 		/// No one added money
 		HasNoMoney,
@@ -173,10 +179,10 @@ pub mod pallet {
 		DoesNotExists,
 		/// The money pot already exists
 		AlreadyExists,
-        /// Contribution is too high
-        NotEnoughBalance,
-        /// The number of contributor is too high
-        MaxMoneyPotContributors,
+		/// Contribution is too high
+		NotEnoughBalance,
+		/// The number of contributor is too high
+		MaxMoneyPotContributors,
 		/// Transfer failed for this account
 		TransferFailed,
 		/// Incompatible amount set with step constant defined
@@ -189,11 +195,7 @@ pub mod pallet {
 		ScheduleError,
 	}
 
-	// #[pallet::storage]
-	// pub(super) type StorageMoneyPot<T: Config> =
-	// 	StorageMap<_, Blake2_128Concat, T::Hash, (T::AccountId, T::BlockNumber)>;
-
-    // Storage
+	// Storage
 
 	// Store the number of money pot created from the begining
 	#[pallet::storage]
@@ -230,6 +232,7 @@ pub mod pallet {
 		BoundedVec<(T::AccountId, BalanceOf<T>), T::MaxMoneyPotContributors>,
 		ValueQuery,
 	>;
+
 	#[pallet::genesis_config]
 	pub struct GenesisConfig<T: Config> {
 		pub money_pot: Vec<(T::AccountId, T::AccountId, BalanceOf<T>)>, //Vec<MoneyPot<T>>, //Vec<(T::AccountId, [u8; 16], Gender)>,
@@ -251,26 +254,6 @@ pub mod pallet {
 		}
 	}
 
-	// // Shamefully stole from Democracy pallet :D
-	// // https://github.com/paritytech/substrate/blob/master/frame/democracy/src/lib.rs#L1060
-	// pub trait EncodeInto: Encode {
-	// 	fn encode_into<T: AsMut<[u8]> + Default>(&self) -> T {
-	// 		let mut t = T::default();
-	// 		self.using_encoded(|data| {
-	// 			if data.len() <= t.as_mut().len() {
-	// 				t.as_mut()[0..data.len()].copy_from_slice(data);
-	// 			} else {
-	// 				// encoded self is too big to fit into a T. hash it and use the first bytes of that
-	// 				// instead.
-	// 				let hash = sp_io::hashing::blake2_256(data);
-	// 				let l = t.as_mut().len().min(hash.len());
-	// 				t.as_mut()[0..l].copy_from_slice(&hash[0..l]);
-	// 			}
-	// 		});
-	// 		t
-	// 	}
-	// }
-
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
 		#[pallet::weight(100)]
@@ -279,19 +262,16 @@ pub mod pallet {
 			receiver: T::AccountId,
 			amount: BalanceOf<T>,
 		) -> DispatchResult {
-            log::info!("💰 [Money pot] - create_with_limit_amount call");
+			log::info!("💰 [Money pot] - create_with_limit_amount call");
 			let sender = ensure_signed(origin)?;
 
-			// Check if amount is compatible with contribution step
-			// ensure!(amount % T::MaxMoneyPotContributors::get() == 0, <Error<T>>::InvalidAmountStep);
-
-            log::info!("💰 [Money pot] - create_with_limit_amount ok ensure_signed");
+			log::info!("💰 [Money pot] - create_with_limit_amount ok ensure_signed");
 
 			let mut created_money_pot = MoneyPot::<T>::create(&sender, &receiver);
 
 			created_money_pot.with_native_currency_limit(amount);
 			let ref_hash = Self::control_creation(created_money_pot)?;
-            log::info!("💰 [Money pot] - create_with_limit_amount ok control_creation");
+			log::info!("💰 [Money pot] - create_with_limit_amount ok control_creation");
 
 			log::info!("💰 [Money pot] - Money pot created with_native_currency_limit");
 			Self::deposit_event(Event::Created { ref_hash });
@@ -309,8 +289,12 @@ pub mod pallet {
 
 			// Check max block number to avoid a schedule in 10 000 years...
 			let current_block = <frame_system::Pallet<T>>::block_number();
+
 			log::info!("💰 [Money pot] - create_with_limit_block - Current block = {:?} / End block = {:?} / Max block = {:?} / current_block + T::MaxBlockNumberEndTime::get().into() = {:?}", current_block, end_block, T::MaxBlockNumberEndTime::get(), current_block + T::MaxBlockNumberEndTime::get().into());
-			ensure!(end_block <= current_block + T::MaxBlockNumberEndTime::get().into(), <Error<T>>::ScheduleError);
+			ensure!(
+				end_block <= current_block + T::MaxBlockNumberEndTime::get().into(),
+				<Error<T>>::ScheduleError
+			);
 
 			let mut created_money_pot = MoneyPot::<T>::create(&sender, &receiver);
 			created_money_pot.with_end_block(end_block);
@@ -318,15 +302,15 @@ pub mod pallet {
 
 			log::info!("💰 [Money pot] - create_with_limit_block ok control_creation");
 
-			// TODO: Get the money pot index
 			let schedule_result = T::Scheduler::schedule_named(
 				(ID_LOCK_MONEY_POT, ref_hash).encode(),
 				DispatchTime::At(end_block),
 				None,
 				63,
 				frame_system::RawOrigin::Root.into(),
-				Call::transfer_balance { ref_hash }.into()
-			).map_err(|_| <Error<T>>::ScheduleError)?;
+				Call::transfer_balance { ref_hash }.into(),
+			)
+			.map_err(|_| <Error<T>>::ScheduleError)?;
 
 			log::info!("💰 [Money pot] - schedule dispatch ok ({:?})", schedule_result);
 
@@ -336,8 +320,12 @@ pub mod pallet {
 		}
 
 		#[pallet::weight(100)]
-		pub fn add_balance(origin: OriginFor<T>, ref_hash: T::Hash, amount: BalanceOf<T>) -> DispatchResult {
-            // TODO: do I need to get my account with Lookup struct ?
+		pub fn add_balance(
+			origin: OriginFor<T>,
+			ref_hash: T::Hash,
+			amount: BalanceOf<T>,
+		) -> DispatchResult {
+			// TODO: do I need to get my account with Lookup struct ?
 			// let who2 = T::Lookup::lookup(who)?;
 
 			let contributor = ensure_signed(origin)?;
@@ -346,7 +334,10 @@ pub mod pallet {
 					amount % T::StepContribution::get() give a BalanceOf<T>
 					We need to cast this to u32 to check if the modulo is correct
 			*/
-			ensure!((amount % T::StepContribution::get()).saturated_into::<u32>() == 0u32, <Error<T>>::InvalidAmountStep);
+			ensure!(
+				(amount % T::StepContribution::get()).saturated_into::<u32>() == 0u32,
+				<Error<T>>::InvalidAmountStep
+			);
 
 			// Check if amount is sup than min contribution
 			ensure!(amount >= T::MinContribution::get(), <Error<T>>::AmountToLow);
@@ -354,32 +345,41 @@ pub mod pallet {
 			let money_pot = Self::get_money_pot(&ref_hash)?;
 			ensure!(money_pot.is_active, <Error<T>>::MoneyPotIsClose);
 
-            // Check if the sender has enought fund
-			ensure!(T::Currency::free_balance(&contributor) >= amount + T::ExistentialDeposit::get(), <Error<T>>::NotEnoughBalance);
+			// Check if the sender has enought fund
+			ensure!(
+				T::Currency::free_balance(&contributor) >= amount + T::ExistentialDeposit::get(),
+				<Error<T>>::NotEnoughBalance
+			);
 
-            log::info!("💰 [Money pot] - Free balance = {:?}", T::Currency::free_balance(&contributor));
+			log::info!(
+				"💰 [Money pot] - Free balance = {:?}",
+				T::Currency::free_balance(&contributor)
+			);
 			Self::lock_balance(&contributor, amount);
 
 			// Insert contribution
 			// If there is a previous contribution with the same account, the amount is added to the previous one
-            <MoneyPotContribution<T>>::try_mutate(&ref_hash, |p| {
+			<MoneyPotContribution<T>>::try_mutate(&ref_hash, |p| {
 				if let Some(previous) = p.iter_mut().find(|prev| prev.0 == contributor) {
 					previous.1 += amount;
 					Ok(())
 				} else {
 					p.try_push((contributor.clone(), amount))
 				}
-            }).map_err(|_| <Error<T>>::MaxMoneyPotContributors)?;
+			})
+			.map_err(|_| <Error<T>>::MaxMoneyPotContributors)?;
 
 			if Self::is_need_transfer(&ref_hash, money_pot)? {
 				Self::transfer_contributions(ref_hash)?;
 			}
 
-			Self::deposit_event(Event::MoneyAdded { ref_hash, who: contributor, amount: amount });
+			Self::deposit_event(Event::MoneyAdded { ref_hash, who: contributor, amount });
 
-            Ok(())
+			Ok(())
 		}
 
+		// Transfer the money pot balance and close it
+		// Can only be called by Scheduler and Root user
 		#[pallet::weight(100)]
 		pub fn transfer_balance(origin: OriginFor<T>, ref_hash: T::Hash) -> DispatchResult {
 			ensure_root(origin);
@@ -387,7 +387,6 @@ pub mod pallet {
 
 			Ok(())
 		}
-
 	}
 
 	impl<T: Config> Pallet<T> {
@@ -396,26 +395,25 @@ pub mod pallet {
 			Self::get_money_pot_from_hash(id)
 		}
 
-        /// Check if the potential owner is the real owner of the pot
+		/// Check if the potential owner is the real owner of the pot
 		/// Return true if `potential_owner` is the owner
 		///
 		/// Can return Error::DoesNotExists if the `id` is invalid
-        pub fn check_owner(potential_owner: &T::AccountId, id: &T::Hash) -> Result<bool, Error<T>> {
-            Ok(Self::get_money_pot_from_hash(id)?.owner == *potential_owner)
-        }
+		pub fn check_owner(potential_owner: &T::AccountId, id: &T::Hash) -> Result<bool, Error<T>> {
+			Ok(Self::get_money_pot_from_hash(id)?.owner == *potential_owner)
+		}
 
 		/// Return true if the money pot exists
 		fn check_if_money_pot_exists(id: &T::Hash) -> bool {
-            // TODO : check if money pot always open
-            Self::money_pots(id) != None
-        }
+			// TODO : check if money pot always open
+			Self::money_pots(id) != None
+		}
 
-        /// Return the money pot associated to the hash if exists
+		/// Return the money pot associated to the hash if exists
 		/// Return Error::DoesNotExists otherwise
-        fn get_money_pot_from_hash(id: &T::Hash) -> Result<MoneyPot<T>, Error<T>> {
-            // TODO : check if money pot always open
-            Self::money_pots(id).ok_or(<Error<T>>::DoesNotExists)
-        }
+		fn get_money_pot_from_hash(id: &T::Hash) -> Result<MoneyPot<T>, Error<T>> {
+			Self::money_pots(id).ok_or(<Error<T>>::DoesNotExists)
+		}
 
 		/// Ensure the money pot creation is valid
 		/// Check if we haven't the same `id` previously stored
@@ -431,8 +429,8 @@ pub mod pallet {
 			<MoneyPotOwned<T>>::try_mutate(&money_pot.owner, |pots| pots.try_push(money_pot_hash))
 				.map_err(|_| <Error<T>>::MaxOpenOverflow)?;
 
-            // Save
-            <MoneyPots<T>>::insert(money_pot_hash, money_pot);
+			// Save
+			<MoneyPots<T>>::insert(money_pot_hash, money_pot);
 
 			// Inc money pot counter
 			let pot_id = Self::money_pot_count() + 1;
@@ -446,7 +444,12 @@ pub mod pallet {
 		/// Check if contributor has enough balance and balance can be locked
 		pub fn lock_balance(contributor: &T::AccountId, amount: BalanceOf<T>) -> () {
 			log::info!("💰 [Money pot] - Lock {:?} of {:?}", amount, contributor);
-			T::Currency::set_lock(ID_LOCK_MONEY_POT, &contributor, amount, frame_support::traits::WithdrawReasons::TRANSFER);
+			T::Currency::set_lock(
+				ID_LOCK_MONEY_POT,
+				&contributor,
+				amount,
+				frame_support::traits::WithdrawReasons::TRANSFER,
+			);
 			log::info!("💰 [Money pot] - Lock done");
 		}
 
@@ -456,23 +459,19 @@ pub mod pallet {
 			let contributions = Self::money_pot_contribution(id);
 
 			let initial_balance: u128 = 0;
-			let mut total_amount: BalanceOf<T> = SaturatedConversion::saturated_into::<BalanceOf<T>>(initial_balance);
+			let mut total_amount: BalanceOf<T> =
+				SaturatedConversion::saturated_into::<BalanceOf<T>>(initial_balance);
 			contributions.iter().for_each(|m| total_amount += m.1);
 			log::info!("💰 [Money pot] - Current total amount : {:?}", total_amount);
 
 			match money_pot.end_time {
 				None => Err(<Error<T>>::NoEndTimeSpecified),
-				Some(end_type) => {
-					match end_type {
-						EndType::Time(block_number) => {
-							// TODO
-							Ok(false)
-						},
-						EndType::AmountReached { amount_type, amount} => {
-							log::info!("💰 [Money pot] - Target amount : {:?}", amount);
-							Ok(total_amount >= amount)
-						},
-					}
+				Some(end_type) => match end_type {
+					EndType::Time(_) => Ok(false),
+					EndType::AmountReached { amount_type, amount } => {
+						log::info!("💰 [Money pot] - Target amount : {:?}", amount);
+						Ok(total_amount >= amount)
+					},
 				},
 			}
 		}
@@ -490,19 +489,37 @@ pub mod pallet {
 			// I need to check if the sum of all amount invested by all withdrawable account + receiver amount >= ExistentialDeposit
 
 			for (contributor, amount) in contributions.iter() {
-				log::info!("💰 [Money pot] - {:?} has lock {:?} for money pot {:?}", contributor, amount, ref_hash);
+				log::info!(
+					"💰 [Money pot] - {:?} has lock {:?} for money pot {:?}",
+					contributor,
+					amount,
+					ref_hash
+				);
 
 				// For each contributor, we unlock the contribution and transfer is to be receiver
 				T::Currency::remove_lock(ID_LOCK_MONEY_POT, &contributor);
 				log::info!("💰 [Money pot] - Lock remove for {:?}", contributor);
 
 				// Check if we can safely transfer amount after unclock
-				ensure!(T::Currency::free_balance(&contributor) >= *amount, <Error<T>>::NotEnoughBalance);
+				ensure!(
+					T::Currency::free_balance(&contributor) >= *amount,
+					<Error<T>>::NotEnoughBalance
+				);
 			}
 
 			for (contributor, amount) in contributions.iter() {
-				T::Currency::transfer(&contributor, &money_pot.receiver, *amount, frame_support::traits::ExistenceRequirement::KeepAlive)?;
-				log::info!("💰 [Money pot] - Transfer of {:?} from {:?} to {:?}", amount, contributor, money_pot.receiver);
+				T::Currency::transfer(
+					&contributor,
+					&money_pot.receiver,
+					*amount,
+					frame_support::traits::ExistenceRequirement::KeepAlive,
+				)?;
+				log::info!(
+					"💰 [Money pot] - Transfer of {:?} from {:?} to {:?}",
+					amount,
+					contributor,
+					money_pot.receiver
+				);
 			}
 
 			// Time to close it
@@ -516,7 +533,5 @@ pub mod pallet {
 
 			Ok(())
 		}
-
-
 	}
 }

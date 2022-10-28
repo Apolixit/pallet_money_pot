@@ -228,7 +228,7 @@ impl pallet_money_pot::Config for Runtime {
 	type PalletsOrigin = OriginCaller;
 	type Schedulable = Call;
 	/// Max one year
-	type MaxBlockNumberEndTime = ConstU32<{60 * 60 * 24 * 365 / SLOT_DURATION as u32}>;
+	type MaxBlockNumberEndTime = ConstU32<{60 * 60 * 24 * 365 / (SLOT_DURATION / 1000) as u32}>;
 }
 
 impl pallet_grandpa::Config for Runtime {
