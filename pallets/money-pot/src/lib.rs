@@ -1,9 +1,10 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-// #[cfg(test)]
-// mod tests;
-// #[cfg(test)]
-// mod mock;
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+mod mock;
 
 // Re-export pallet items so that they can be accessed from the crate namespace.
 pub use pallet::*;

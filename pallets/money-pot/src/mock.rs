@@ -1,29 +1,42 @@
-use frame_support::parameter_types;
-
-use super::*;
 use crate::{self as pallet_money_pot};
-
+use frame_support::{
+	ord_parameter_types, parameter_types,
+	traits::{ConstU16, ConstU32, ConstU64},
+	weights::Weight,
+};
+use frame_system::{
+	mocking::{MockBlock, MockUncheckedExtrinsic}, EnsureRoot, RawOrigin,
+};
+use sp_runtime::{
+	testing::{Header, H256},
+	traits::{BlakeTwo256, IdentityLookup},
+	BuildStorage, Perbill,
+};
 
 frame_support::construct_runtime!(
 	pub enum Test
 	where
-		Block = MockBloc<Test>,
-		NodeBlock = MockBloc<Test>,
+		Block = MockBlock<Test>,
+		NodeBlock = MockBlock<Test>,
 		UncheckedExtrinsic = MockUncheckedExtrinsic<Test>,
 	{
-		System: frame_system::{Pallet, Call, Config, Storage, Event<T>},
-		Balances: pallet_balances::{Pallet, Call, Storage, Config<T>, Event<T>},
-		Scheduler: pallet_scheduler::{Pallet, Call, Storage, Event<T>},
-		MoneyPot: pallet_money_pot::{Pallet, Call, Storage, Config<T>, Event<T>},
+		System: frame_system,
+		Balances: pallet_balances,
+		Scheduler: pallet_scheduler,
+		MoneyPot: pallet_money_pot,
 	}
 );
+
+parameter_types! {
+	pub BlockWeights: frame_system::limits::BlockWeights = frame_system::limits::BlockWeights::simple_max(2_000_000_000_000);
+}
 
 impl frame_system::Config for Test {
 	type BaseCallFilter = frame_support::traits::Everything;
 	type BlockWeights = ();
 	type BlockLength = ();
 	/// The identifier used to distinguish between accounts.
-	type AccountId = u32;
+	type AccountId = u64;
 	/// The aggregated dispatch type that is available for extrinsics.
 	type Call = Call;
 	/// The lookup mechanism to get account ID from whatever is passed in dispatchers.
@@ -64,7 +77,7 @@ impl frame_system::Config for Test {
 	type SS58Prefix = ConstU16<42>;
 	/// The set code logic, just the default since we're not a parachain.
 	type OnSetCode = ();
-	type MaxConsumers = frame_support::traits::ConstU32<16>;
+	type MaxConsumers = ConstU32<16>;
 }
 
 parameter_types! {
@@ -76,21 +89,25 @@ parameter_types! {
 
 impl pallet_money_pot::Config for Test {
 	type Event = Event;
-	type Currency = u64;
+	type Currency = Balances;
 	type Scheduler = Scheduler;
 	type MaxMoneyPotCurrentlyOpen = MaxMoneyPotCurrentlyOpen;
 	type MaxMoneyPotContributors = MaxMoneyPotContributors;
 	type MinContribution = MinContribution;
 	type StepContribution = StepContribution;
-	type ExistentialDeposit = ConstU128<MOCK_EXISTENTIAL_DEPOSIT>;
+	type ExistentialDeposit = ConstU64<MOCK_EXISTENTIAL_DEPOSIT>;
 	type PalletsOrigin = OriginCaller;
 	type Schedulable = Call;
 	/// Max one year
 	type MaxBlockNumberEndTime = ConstU32<1_000_000>;
 }
 
+ord_parameter_types! {
+	pub const One: u64 = 1;
+}
+
 /// Existential deposit.
-pub const MOCK_EXISTENTIAL_DEPOSIT: u128 = 1;
+pub const MOCK_EXISTENTIAL_DEPOSIT: u64 = 1;
 
 impl pallet_balances::Config for Test {
 	type MaxLocks = ConstU32<50>;
@@ -101,7 +118,7 @@ impl pallet_balances::Config for Test {
 	/// The ubiquitous event type.
 	type Event = Event;
 	type DustRemoval = ();
-	type ExistentialDeposit = ConstU128<MOCK_EXISTENTIAL_DEPOSIT>;
+	type ExistentialDeposit = ConstU64<MOCK_EXISTENTIAL_DEPOSIT>;
 	type AccountStore = System;
 	type WeightInfo = ();
 }
@@ -111,42 +128,61 @@ parameter_types! {
 }
 
 impl pallet_scheduler::Config for Test {
-    type Event = Event;
-    type Origin = Origin;
-    type PalletsOrigin = OriginCaller;
-    type Call = Call;
-    type MaximumWeight = ();
-    type ScheduleOrigin = EnsureRoot<u64>; //EitherOfDiverse<EnsureRoot<u64>, EnsureSignedBy<One, u64>>;
-    type OriginPrivilegeCmp = frame_support::traits::EqualPrivilegeOnly;
-    type MaxScheduledPerBlock = ConstU32<50>;
-    type WeightInfo = ();
-    type PreimageProvider = ();
-    type NoPreimagePostponement = ();
+	type Event = Event;
+	type Origin = Origin;
+	type PalletsOrigin = OriginCaller;
+	type Call = Call;
+	type MaximumWeight = ();
+	type ScheduleOrigin = EnsureRoot<u64>;
+	type OriginPrivilegeCmp = frame_support::traits::EqualPrivilegeOnly;
+	type MaxScheduledPerBlock = ConstU32<50>;
+	type WeightInfo = ();
+	type PreimageProvider = ();
+	type NoPreimagePostponement = ();
 }
 
 pub struct ExtBuilder;
 
+impl Default for ExtBuilder {
+    fn default() -> Self {
+        Self { }
+    }
+}
+
 impl ExtBuilder {
 	pub fn build(self) -> sp_io::TestExternalities {
-		let init = system::GenesisConfig::default().build_storage::<Test>().unwrap();
-		pallet_balances::GenesisConfig::<Test> {
-			balances: vec![((1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60))]
-		}
-		.assimilate_storage(&mut init)
-		.unwrap();
+		let config = GenesisConfig {
+			system: Default::default(),
+			balances: pallet_balances::GenesisConfig::<Test> {
+				balances: vec![(1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)],
+			},
+			money_pot: Default::default(),
+		};
 
-		let mut exp = sp_io::TestExternalities::new(init);
+		// let init = GenesisConfig::default().money_pot.build_storage::<Test>().unwrap();
+		// pallet_balances::GenesisConfig::<Test> {
+		// 	balances: vec![(1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)],
+		// }
+		// .assimilate_storage(&mut init)
+		// .unwrap();
+
+		let mut ext = sp_io::TestExternalities::new(config.build_storage().unwrap());
 		ext.execute_with(|| System::set_block_number(1));
 
 		ext
 	}
 }
 
-pub fn run_to_block(n: u64) {
-	let current_block = System::block_number();
-	while current_block < n {
-		Scheduler::on_finalize(current_block);
-		Scheduler::set_block_number(current_block + 1);
-		Scheduler::on_initialize(System::block_number());
-	}
+// pub fn run_to_block(n: u64) {
+// 	let current_block = System::block_number();
+// 	while current_block < n {
+// 		Scheduler::on_finalize(current_block);
+// 		Scheduler::set_block_number(current_block + 1);
+// 		Scheduler::on_initialize(System::block_number());
+// 	}
+// }
+
+
+pub fn root() -> OriginCaller {
+	RawOrigin::Root.into()
 }
