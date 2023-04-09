@@ -271,6 +271,11 @@ pub mod pallet {
 			log::info!("💰 [Money pot] - create_with_limit_amount call");
 			let sender = ensure_signed(origin)?;
 
+			// Amount should be at least equal to min contribution and sup than 0
+			ensure!(
+				amount.saturated_into::<u32>() > 0u32 && 
+				amount >= T::MinContribution::get(), <Error<T>>::AmountToLow);
+
 			log::info!("💰 [Money pot] - create_with_limit_amount ok ensure_signed");
 
 			let mut created_money_pot = MoneyPot::<T>::create(&sender, &receiver);
@@ -388,7 +393,7 @@ pub mod pallet {
 		// Can only be called by Scheduler and Root user
 		#[pallet::weight(100)]
 		pub fn transfer_balance(origin: OriginFor<T>, ref_hash: T::Hash) -> DispatchResult {
-			ensure_root(origin);
+			ensure_root(origin).unwrap();
 			Self::transfer_contributions(ref_hash)?;
 
 			Ok(())

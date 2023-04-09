@@ -1,11 +1,11 @@
 use crate::{self as pallet_money_pot};
 use frame_support::{
 	ord_parameter_types, parameter_types,
-	traits::{ConstU16, ConstU32, ConstU64},
+	traits::{ConstU16, ConstU32, ConstU64, Hooks},
 	weights::Weight,
 };
 use frame_system::{
-	mocking::{MockBlock, MockUncheckedExtrinsic}, EnsureRoot, RawOrigin,
+	mocking::{MockBlock, MockUncheckedExtrinsic}, EnsureRoot,
 };
 use sp_runtime::{
 	testing::{Header, H256},
@@ -83,7 +83,7 @@ impl frame_system::Config for Test {
 parameter_types! {
 	pub const MaxMoneyPotCurrentlyOpen: u32 = 5;
 	pub const MaxMoneyPotContributors: u32 = 1000;
-	pub const MinContribution: u32 = 5;
+	pub const MinContribution: u32 = 20;
 	pub const StepContribution: u32 = 5;
 }
 
@@ -154,17 +154,10 @@ impl ExtBuilder {
 		let config = GenesisConfig {
 			system: Default::default(),
 			balances: pallet_balances::GenesisConfig::<Test> {
-				balances: vec![(1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)],
+				balances: vec![(1, 100000), (2, 100000), (3, 100000), (4, 100000), (5, 100000), (6, 100000)],
 			},
 			money_pot: Default::default(),
 		};
-
-		// let init = GenesisConfig::default().money_pot.build_storage::<Test>().unwrap();
-		// pallet_balances::GenesisConfig::<Test> {
-		// 	balances: vec![(1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)],
-		// }
-		// .assimilate_storage(&mut init)
-		// .unwrap();
 
 		let mut ext = sp_io::TestExternalities::new(config.build_storage().unwrap());
 		ext.execute_with(|| System::set_block_number(1));
@@ -173,16 +166,19 @@ impl ExtBuilder {
 	}
 }
 
-// pub fn run_to_block(n: u64) {
-// 	let current_block = System::block_number();
-// 	while current_block < n {
-// 		Scheduler::on_finalize(current_block);
-// 		Scheduler::set_block_number(current_block + 1);
-// 		Scheduler::on_initialize(System::block_number());
-// 	}
-// }
+pub fn run_to_block(n: u64) {
+	let current_block = System::block_number();
+	while System::block_number() < n {
+		if System::block_number() > 1 {
+			System::on_finalize(n);
+			Scheduler::on_finalize(System::block_number());
+			MoneyPot::on_finalize(n);
+		}
 
+		System::set_block_number(System::block_number() + 1);
 
-pub fn root() -> OriginCaller {
-	RawOrigin::Root.into()
+		System::on_initialize(System::block_number());
+		Scheduler::on_initialize(System::block_number());
+		MoneyPot::on_initialize(current_block);
+	}
 }

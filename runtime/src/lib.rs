@@ -6,9 +6,7 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
-use frame_support::traits::{Currency, LockableCurrency};
 use frame_system::EnsureRoot;
-use pallet_balances::{PositiveImbalance, NegativeImbalance};
 use pallet_grandpa::{
 	fg_primitives, AuthorityId as GrandpaId, AuthorityList as GrandpaAuthorityList,
 };
